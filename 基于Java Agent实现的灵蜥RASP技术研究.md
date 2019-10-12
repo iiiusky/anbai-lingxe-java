@@ -108,20 +108,30 @@ public class FileOutputStream extends OutputStream {
 
 诚然，基于`Java Agent`机制的`RASP`产品核心实现的确是如此简单，我们需要通过预定义大量的Hook点来插入我们防御逻辑从而实现深入的防御。但是仅有此想法恐怕仅仅只能做出一个非常粗浅的甚至存在非常多安全性和稳定性的产品了，因为这个过程中会有非常多的坑需要踩的。`RASP`的核心技术依赖于`Hook`但是绝不仅仅只是`Hook`那么简单。
 
+如果你不知道如何通过Java Agent实现Hook Java方法，可以参考我们之前发的文章的Demo：
+
+1. [Java SpEL、Ognl、MVEL2表达式Hook项目](http://javaweb.org/?p=1862)
+2. [javaweb-expression](https://github.com/anbai-inc/javaweb-expression)
+3. [javaweb-codereview](https://github.com/anbai-inc/javaweb-codereview/tree/master/javaweb-codereview-agent)
+4. [浅谈RASP技术攻防之基础篇](https://javaweb.org.cn/3237.shtml)
+5. [浅谈RASP技术攻防之实战[环境配置篇]](https://javaweb.org.cn/3238.shtml)
+6. [浅谈RASP技术攻防之实战[代码实现篇]](https://javaweb.org.cn/3239.shtml)
+
+
 ### 3. 如何更好的实现方法Hook机制?
 
 #### 3.1 Hook点的深度问题
 
 我们常用的Hook思路大概是这样:
 
-1. 确定需要Hook的类全路径,如:`java.lang.Runtime`.
+1. 确定需要Hook的类名,如:`java.lang.Runtime`.
 2. 指定需要Hook的方法和方法描述符，如指定方法名`exec`以及描述符`(Ljava/lang/String;)Ljava/lang/Process;`。
 
 这是一种非常典型的对`Runtime`本地命令执行的Hook点，很多人对Java本地命令执行的认识可能也就局限于此；但是跟进`Runtime.getRuntime().exec(xxx)`的调用链可以清晰的看到其最终是调用了`java.lang.ProcessBuilder`类的`start`方法、`start`方法最终又调用了`java.lang.ProcessImpl.start(xxx)`方法、最终调用到`java.lang.UNIXProcess`类(Unix系统是这个，不同的文件系统实现方法不一样)的native方法：`forkAndExec`去执行的系统命令的。所以只是对上层的`Runtime`或者`ProcessBuilder`类进行Hook是远远不够的，攻击者只需要调用更为底层的实现代码即可绕过Hook。
 
 **java.lang.Runtime本地命令执行调用链**
 
-```
+```java
 at java.lang.ProcessBuilder.start(ProcessBuilder.java:1047)
 at java.lang.Runtime.exec(Runtime.java:617)
 at java.lang.Runtime.exec(Runtime.java:450)
@@ -137,3 +147,5 @@ at java.lang.ProcessBuilder.start(ProcessBuilder.java:1028)
 定义一个Hook点之前需要完整的跟一下调用链，否则攻击者可以直接调用底层的API绕过防御。值得注意的是Java语言可以通过`JNI`(`Java Native Interface`)调用动态链接库的方式绕过防御机制，所以需要想办法解决`JNI`的`native`方法调用的安全问题。
 
 Java文件读写底层都是通过JNI调用的，攻击者可以通过反射去调用`native`方法从而会导致Hook被绕过，如：`java.io.RandomAccessFile#read0`,所以还需要考虑`Java反射机制`+`JNI`的安全问题。
+
+#### 3.2 Hook机制进阶
