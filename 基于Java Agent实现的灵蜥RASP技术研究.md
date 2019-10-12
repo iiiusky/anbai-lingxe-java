@@ -53,7 +53,7 @@ public class LingXeClassFileTransformer implements ClassFileTransformer {
 }
 ```
 
-### 2 利用Java Agent机制能做什么?
+### 2. 利用Java Agent机制能做什么?
 
 因为使用`Java Agent`可以深入到JVM类加载机制,所以我们可以轻松的在任意的类方法中插入自己的java代码。比如我们在`java.io.FileOutputStream`类的构造方法里面插入了防御代码就可以获取到用户即将写入的文件路径，拿到文件路径后就可以交给`灵蜥RASP`去检测文件名是否合法？如果写入了非法文件我们可以直接`return`或者`throw`来终止恶意文件的写入。
 
@@ -77,7 +77,7 @@ public class FileOutputStream extends OutputStream {
 			LingXeHookResult var4 = 灵蜥RASP调用.onMethodEnter(var3, 其他必要参数);
 
 			if (灵蜥处理结果检测) {
-				根据RASP返回的结果对象实现自动return或者throw等操作。
+				根据RASP返回的结果对象自动return/throw等操作。
 			} else {
 				FileOutputStream原始逻辑代码...
 			}
@@ -108,3 +108,32 @@ public class FileOutputStream extends OutputStream {
 
 诚然，基于`Java Agent`机制的`RASP`产品核心实现的确是如此简单，我们需要通过预定义大量的Hook点来插入我们防御逻辑从而实现深入的防御。但是仅有此想法恐怕仅仅只能做出一个非常粗浅的甚至存在非常多安全性和稳定性的产品了，因为这个过程中会有非常多的坑需要踩的。`RASP`的核心技术依赖于`Hook`但是绝不仅仅只是`Hook`那么简单。
 
+### 3. 如何更好的实现方法Hook机制?
+
+#### 3.1 Hook点的深度问题
+
+我们常用的Hook思路大概是这样:
+
+1. 确定需要Hook的类全路径,如:`java.lang.Runtime`.
+2. 指定需要Hook的方法和方法描述符，如指定方法名`exec`以及描述符`(Ljava/lang/String;)Ljava/lang/Process;`。
+
+这是一种非常典型的对`Runtime`本地命令执行的Hook点，很多人对Java本地命令执行的认识可能也就局限于此；但是跟进`Runtime.getRuntime().exec(xxx)`的调用链可以清晰的看到其最终是调用了`java.lang.ProcessBuilder`类的`start`方法、`start`方法最终又调用了`java.lang.ProcessImpl.start(xxx)`方法、最终调用到`java.lang.UNIXProcess`类(Unix系统是这个，不同的文件系统实现方法不一样)的native方法：`forkAndExec`去执行的系统命令的。所以只是对上层的`Runtime`或者`ProcessBuilder`类进行Hook是远远不够的，攻击者只需要调用更为底层的实现代码即可绕过Hook。
+
+**java.lang.Runtime本地命令执行调用链**
+
+```
+at java.lang.ProcessBuilder.start(ProcessBuilder.java:1047)
+at java.lang.Runtime.exec(Runtime.java:617)
+at java.lang.Runtime.exec(Runtime.java:450)
+at java.lang.Runtime.exec(Runtime.java:347)
+at java.lang.UNIXProcess.forkAndExec(Native Method)
+at java.lang.UNIXProcess.<init>(UNIXProcess.java:185)
+at java.lang.ProcessImpl.start(ProcessImpl.java:130)
+at java.lang.ProcessBuilder.start(ProcessBuilder.java:1028)
+```
+
+与之类似的还有java的文件操作，初级的做法是直接Hook掉`java.io.File`、`java.io.FileInputStream`、`java.io.FileOutputStream`就完事了，但是当你深入研究过Java文件系统后就会发现能够实现文件读写的API不下十处。如：`java.io.RandomAccessFile`、`sun.nio.ch.FileChannelImpl`、`sun.nio.fs.UnixChannelFactory`、`(Windows|Unix)FileSystemProvider`等。
+
+定义一个Hook点之前需要完整的跟一下调用链，否则攻击者可以直接调用底层的API绕过防御。值得注意的是Java语言可以通过`JNI`(`Java Native Interface`)调用动态链接库的方式绕过防御机制，所以需要想办法解决`JNI`的`native`方法调用的安全问题。
+
+Java文件读写底层都是通过JNI调用的，攻击者可以通过反射去调用`native`方法从而会导致Hook被绕过，如：`java.io.RandomAccessFile#read0`,所以还需要考虑`Java反射机制`+`JNI`的安全问题。
