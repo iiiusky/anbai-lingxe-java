@@ -159,15 +159,15 @@ Java文件读写底层都是通过JNI调用的，攻击者可以通过反射去�
 
 以上几个问题看似需求很简单，但是实现起来是挺有难度的，不过经过一段时间的优化目前都已经搞定了。
 
-##### 3.2.1 Hook点通配符问题**
+##### 3.2.1 Hook点通配符问题
 
-某些需要Hook的类存在多个不一样的命名但是却实现却大致上是一样的类，如：`java.io.*FileSystem`（不同的文件系统类名不一样，如Windows、Unix等）、`*.fileupload.FileUploadBase`(Tomcat自己内置了commons-fileupload库但是包名不一样)。方法名和方法描述符同理，比如使用方法描述法正则匹配可以解决多个方法名相同方法参数入参不同且调用链不一样的需求需要重复定义Hook点的问题。
+某些需要Hook的类存在多个不一样的命名但是却实现却大致上是一样的类，如：`java.io.*FileSystem`（不同的文件系统类名不一样，如Windows、Unix等）、`*.fileupload.FileUploadBase`(Tomcat自己内置了`commons-fileupload`库但是包名不一样)。方法名和方法描述符同理，比如使用方法描述法正则匹配可以解决多个方法名相同方法参数入参不同且调用链不一样的需求需要重复定义Hook点的问题。
 
 ##### 3.2.2 Java注解Hook
 
-Java注解目前已经广泛的被用于替换传统的xml配置，比如Spring MVC的注解已经被广泛的接受了。
+Java注解目前已经广泛的被用于替换传统的xml配置，比如`Spring`的注解已经被广泛的接受了,基于SpringBoot的应用更是极大程度的依赖着注解，所以我们有必要考虑下对注解的类方法Hook问题。
 
-某些场景我们需要Hook注解来实现防御，我目前主要使用`Hook Annotation`的方式来Hook Spring的控制器来实现对Spring框架的增强。
+我目前主要使用`Hook Annotation`的方式来Hook `Spring MVC`的控制器来实现对Spring框架的增强。
 
 ##### 3.2.3 RASP核心-子类方法Hook
 
@@ -198,7 +198,7 @@ JDK1.6开始`Java Agent`可以通过设置`Native-Method-Prefix`的方式为所�
 
 ![](media/15706988721155/15712927681807.jpg)
 
-当java.lang.ProcessBuilder类被访问时候会被agent添加上灵蜥的安全防御逻辑，最终执行的类的原始代码其实是下图所示的代码：
+当`java.lang.ProcessBuilder`或其他的Hook类被攻击者访问时候会通过agent添加上灵蜥的安全防御逻辑，最终执行的`ProcessBuilder`类的原代码大致如下图所示代码：
 
 ![](media/15706988721155/15712928639617.png)
 
