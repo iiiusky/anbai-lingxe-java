@@ -149,3 +149,65 @@ at java.lang.ProcessBuilder.start(ProcessBuilder.java:1028)
 Java文件读写底层都是通过JNI调用的，攻击者可以通过反射去调用`native`方法从而会导致Hook被绕过，如：`java.io.RandomAccessFile#read0`,所以还需要考虑`Java反射机制`+`JNI`的安全问题。
 
 #### 3.2 Hook机制进阶
+
+掌握了Hook机制我们就可以轻松的实现大部分的API Hook，但是如果想要足够的深入那么最起码还要实现如下几点：
+
+1. Hook点类名、方法名、方法描述法支持正则表达式或者通配符(为了批量处理类或方法同逻辑的Hook点)。
+2. 支持对类、方法级的注解Hook。
+3. 支持对`一个类的子类或接口实现类的方法`Hook。
+4. 支持对`Java Native`方法的Hook。
+
+以上几个问题看似需求很简单，但是实现起来是挺有难度的，不过经过一段时间的优化目前都已经搞定了。
+
+##### 3.2.1 Hook点通配符问题**
+
+某些需要Hook的类存在多个不一样的命名但是却实现却大致上是一样的类，如：`java.io.*FileSystem`（不同的文件系统类名不一样，如Windows、Unix等）、`*.fileupload.FileUploadBase`(Tomcat自己内置了commons-fileupload库但是包名不一样)。方法名和方法描述符同理，比如使用方法描述法正则匹配可以解决多个方法名相同方法参数入参不同且调用链不一样的需求需要重复定义Hook点的问题。
+
+##### 3.2.2 Java注解Hook
+
+Java注解目前已经广泛的被用于替换传统的xml配置，比如Spring MVC的注解已经被广泛的接受了。
+
+某些场景我们需要Hook注解来实现防御，我目前主要使用`Hook Annotation`的方式来Hook Spring的控制器来实现对Spring框架的增强。
+
+##### 3.2.3 RASP核心-子类方法Hook
+
+某些时候我们需要拦截JDBC执行的SQL语句的时候我们可能需要去Hook JDBC的查询方法。很多人的处理方式是直接去适配单个数据库的实现，这样一来就变得非常麻烦了，因为你不得不考虑适配每一个数据库、兼容每一个数据库的版本。但是如果我们通过Hook接口方法可以轻易的拦截到其实现类而不再需要去考虑数据库适配、数据库版本适配的问题了。
+
+例如我们需要Hook `java.sql.Connection`类的`prepareStatement`方法那么我们就不再需要去找出它的实现类有哪些，而是通过Agent自动待加载的类是否是其子类。如Agent在加载到 `com.mysql.jdbc.ConnectionImpl`类时我们通过ASM检测到了方法名`prepareStatement`和描述符和我们定义的Hook完全一致，那么我们就可以直接判定这个`com.mysql.jdbc.ConnectionImpl`就是需要被我们动态Hook的类直接插入防御代码就行了，通过这一方法成功的解决了手动找出实现类和方法的困难，同时也极大的提高了Hook机制的灵活度。
+
+在2016年研发灵蜥`Java Agent`的第一个版本的时候我就已经考虑了这个问题，当时想通过直接反射的方式来实现父类检测，结果遇到了反射的类可能并未被JVM加载导致异常的问题。第二个版本的时候我使用的方法是给`疑似的Hook点`(方法名和方法描述符都一直的类方法)动态插入父类检测代码来实现子类Hook的。如今灵蜥的第三个版本已经解决了第一个版本的类加载问题，所以也就不在需要利用动态代码检测的方式判断了。
+
+子类方法Hook的实现能够极大的提高Hook机制的灵活性，灵蜥Agent通过对Java的标准的`JDBC`、`Java Servlet`等的接口API进行Hook从而实现了如下重要特性：
+
+1. **理论上支持所有实现了标准的JDBC的数据库。**
+2. **理论上支持所有实现了标准的`Java Servlet API`的Java容器。**
+
+##### 3.2.4 RASP核心-Native方法Hook
+
+Java语言底层实现有很多地方都是通过调用native方法来实现的，比较典型的如：`文件的读写`、`本地命令执行`等。因为对API的Hook无法阻止攻击者使用反射或其他机制直接调用jni方法，所以我们有必要连同native方法的调用也一起Hook了。
+
+JDK1.6开始`Java Agent`可以通过设置`Native-Method-Prefix`的方式为所有的native方法设置前缀，利用了这个特性以后我使用了纯Java实现了对native方法的Hook，如此以来也就不用担心jni方法调用问题了。
+
+#### 4. 灵蜥Agent Hook示例
+
+灵蜥通过多层的封装让我们定义和处理Hook点已经完全不需要了解ASM了，我觉得为写Hook点的人屏蔽掉学习ASM和Agent的成本才能够让Agent实现得更加稳定。
+
+这里以Java调用本地系统命令的Hook机制为例，很多人都知道Java可以通过`Runtime.getRuntime().exec()`去执行系统命令，但是很少有人去真正的看了整个调用链，以为只需要Hook `java.lang.Runtime`或者`java.lang.ProcessBuilder`就可以了，其实还需要关注其最终执行的类，如：`UNIXProcess`、`ProcessImpl`否则就可以绕过，Java最终会调用一个叫`forkAndExec`的native方法去执行系统命令，所以我们如果想一步到位就直接Hook这个native方法就行了，这里我为了以防万一Hook了多个点。
+
+**com.anbai.lingxe.agent.hooks.LocalCommandHook.java示例**
+
+![](media/15706988721155/15712927681807.jpg)
+
+当java.lang.ProcessBuilder类被访问时候会被agent添加上灵蜥的安全防御逻辑，最终执行的类的原始代码其实是下图所示的代码：
+
+![](media/15706988721155/15712928639617.png)
+
+如果某个恶意请求最终触发了本地命令执行Hook点，那么该请求最终会被终止访问：
+
+![](media/15706988721155/15712929677278.png)
+
+同时客户端也会将攻击日志回传给云端进行可视化展示&预警通知。
+
+![](media/15706988721155/15712930919340.jpg)
+
+在云端用户可以清晰的看到攻击者的请求参数、请求头以及调用链等信息。
